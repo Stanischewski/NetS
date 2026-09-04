@@ -1,0 +1,28 @@
+[Unit]
+Description=NetS -- Netzwerk-Inventar und Topologie
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nets
+ExecStart=/opt/nets/.venv/bin/python -m nets --db /var/lib/nets/nets.db serve --port 8080
+Restart=always
+RestartSec=5
+
+# Der Sniffer braucht Raw-Sockets. Statt als root zu laufen, reichen diese
+# Capabilities -- CAP_NET_ADMIN nur, wenn spaeter Monitor-Mode dazukommt.
+User=nets
+Group=nets
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+StateDirectory=nets
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nets
+
+[Install]
+WantedBy=multi-user.target

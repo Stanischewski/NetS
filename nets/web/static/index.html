@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetS — Netzwerkanalyse</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1>NetS</h1>
+  <nav id="tabs">
+    <button data-tab="overview" class="active">Übersicht</button>
+    <button data-tab="devices">Geräte</button>
+    <button data-tab="topology">Topologie</button>
+    <button data-tab="web">Weboberflächen</button>
+    <button data-tab="infra">Infrastruktur</button>
+    <button data-tab="settings">Einstellungen</button>
+  </nav>
+  <span id="health" class="pill"></span>
+</header>
+
+<main>
+  <!-- Übersicht -->
+  <section id="tab-overview" class="tab active">
+    <div id="stats" class="stats"></div>
+    <div class="card">
+      <h2>Sammler-Status</h2>
+      <div id="collector-status"></div>
+    </div>
+    <div class="card">
+      <h2>Zuletzt gesehen</h2>
+      <div id="recent"></div>
+    </div>
+  </section>
+
+  <!-- Geräte -->
+  <section id="tab-devices" class="tab">
+    <div class="toolbar">
+      <input id="dev-search" type="search" placeholder="MAC, IP, Hostname, Hersteller …">
+      <select id="dev-mode">
+        <option value="">Adressierung: alle</option>
+        <option value="dhcp">nur DHCP</option>
+        <option value="static">nur statisch</option>
+        <option value="unknown">noch unklar</option>
+      </select>
+      <select id="dev-seen">
+        <option value="">Zeitraum: alle</option>
+        <option value="1">letzte 24 h</option>
+        <option value="7">letzte 7 Tage</option>
+        <option value="30">letzte 30 Tage</option>
+      </select>
+      <label class="check"><input type="checkbox" id="dev-ignored"> ignorierte zeigen</label>
+      <span class="grow"></span>
+      <span id="dev-count" class="muted"></span>
+      <button id="export-csv" title="Aktuelle Ansicht als CSV (Semikolon, Excel-kompatibel)">CSV</button>
+      <button id="export-md" title="Aktuelle Ansicht als Markdown-Tabelle">Markdown</button>
+    </div>
+    <div id="device-table"></div>
+  </section>
+
+  <!-- Topologie -->
+  <section id="tab-topology" class="tab">
+    <div class="toolbar">
+      <input id="topo-search" type="search" placeholder="Gerät, IP, MAC, Port …">
+      <button id="topo-expand">Alles aufklappen</button>
+      <button id="topo-collapse">Alles zuklappen</button>
+      <button id="topo-rebuild">Neu berechnen</button>
+      <span class="grow"></span>
+      <span id="topo-stats" class="muted"></span>
+    </div>
+    <div id="topo-tree" class="tree"></div>
+    <div class="legend">
+      <span><i class="tico infra">▤</i> Switch / Router</span>
+      <span><i class="tico port">⊟</i> Port</span>
+      <span><i class="tico device">•</i> Endgerät</span>
+      <span><i class="tico group">⊘</i> ohne Zuordnung</span>
+      <span class="muted">Zahl rechts = Endgeräte im Zweig</span>
+    </div>
+  </section>
+
+  <!-- Weboberflächen -->
+  <section id="tab-web" class="tab">
+    <div class="toolbar">
+      <input id="web-search" type="search" placeholder="Gerät, IP, Titel …">
+      <button id="web-scan">Jetzt suchen</button>
+      <span class="grow"></span>
+      <span id="web-stats" class="muted"></span>
+    </div>
+    <div id="web-hint" class="card muted"></div>
+    <div id="web-list"></div>
+  </section>
+
+  <!-- Infrastruktur -->
+  <section id="tab-infra" class="tab">
+    <div class="toolbar">
+      <select id="new-adapter-type"></select>
+      <button id="add-adapter">Gerät hinzufügen</button>
+      <span class="grow"></span>
+      <span class="muted">Adaptertypen werden automatisch erkannt</span>
+    </div>
+    <div id="adapter-hint" class="card muted"></div>
+    <div id="infra-list"></div>
+  </section>
+
+  <!-- Einstellungen -->
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <h2>Erfassung</h2>
+      <div id="settings-form"></div>
+      <div class="row">
+        <button id="save-settings" class="primary">Speichern</button>
+        <button id="run-sweep">ARP-Sweep jetzt</button>
+        <span id="settings-msg" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Aufbewahrung</h2>
+      <p class="muted">Wie lange gesammelte Daten behalten werden. 0 = nie automatisch löschen.</p>
+      <div id="retention-form"></div>
+      <div class="row">
+        <button id="save-retention" class="primary">Speichern</button>
+        <span id="retention-msg" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Gesammelte Daten</h2>
+      <div id="data-stats"></div>
+      <div class="row">
+        <button id="data-vacuum">Aufräumen &amp; komprimieren</button>
+        <span class="grow"></span>
+        <input id="stale-days" type="number" value="90" min="1" style="width:5.5em">
+        <button id="purge-stale">Geräte löschen, die so lange nicht gesehen wurden</button>
+      </div>
+      <div class="row">
+        <button id="purge-history" class="danger">Nur Verlauf löschen</button>
+        <button id="purge-devices" class="danger">Alle gesammelten Daten löschen</button>
+        <button id="purge-everything" class="danger">Alles zurücksetzen (inkl. Adapter)</button>
+      </div>
+      <div id="data-msg" class="muted"></div>
+    </div>
+
+    <div class="card">
+      <h2>Sicherung</h2>
+      <p class="muted">
+        Adapter und Einstellungen als JSON-Datei. Mit Zugangsdaten ist die Datei
+        entsprechend vertraulich zu behandeln — ohne sie muss man die Passwörter
+        nach dem Einspielen neu eintragen.
+      </p>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="export-secrets" checked> Zugangsdaten einschließen</label>
+        <button id="config-export">Exportieren</button>
+        <button id="config-import">Importieren …</button>
+        <input id="config-file" type="file" accept="application/json,.json" hidden>
+        <span id="backup-msg" class="muted"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <button id="modal-close" class="close">×</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

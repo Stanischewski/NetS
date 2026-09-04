@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi
+
+# Nur bei 'purge' die gesammelten Daten entfernen. Ein einfaches 'remove'
+# soll die Historie nicht wegwerfen -- die ist der Wert des Ganzen.
+if [ "$1" = purge ]; then
+  rm -rf /var/lib/nets
+  if getent passwd nets >/dev/null; then
+    deluser --system nets >/dev/null 2>&1 || true
+  fi
+fi
+
+exit 0

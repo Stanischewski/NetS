@@ -1,0 +1,31 @@
+[Unit]
+Description=NetS -- Netzwerk-Inventar und Topologie
+Documentation=file:///usr/share/doc/nets/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Aus der Paketinstallation: das System-Python, keine virtuelle Umgebung.
+ExecStart=/usr/bin/python3 -m nets --db /var/lib/nets/nets.db serve --port 8080
+Restart=always
+RestartSec=5
+EnvironmentFile=-/etc/default/nets
+
+User=nets
+Group=nets
+# Der passive Sniffer braucht Raw-Sockets. Statt als root zu laufen, genuegen
+# diese beiden Capabilities -- CAP_NET_ADMIN nur fuer den Monitor-Mode.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+StateDirectory=nets
+StateDirectoryMode=0750
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nets
+
+[Install]
+WantedBy=multi-user.target

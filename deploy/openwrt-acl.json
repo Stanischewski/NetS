@@ -1,0 +1,15 @@
+{
+  "nets-readonly": {
+    "description": "Nur-Lese-Zugriff fuer NetS",
+    "read": {
+      "ubus": {
+        "system":            [ "board", "info" ],
+        "dhcp":              [ "ipv4leases", "ipv6leases" ],
+        "network.arp":       [ "list" ],
+        "network.device":    [ "status" ],
+        "network.wireless":  [ "status" ],
+        "iwinfo":            [ "assoclist", "info", "devices" ]
+      }
+    }
+  }
+}

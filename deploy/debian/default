@@ -1,0 +1,3 @@
+# Wird von /lib/systemd/system/nets.service eingelesen.
+# Beispiele:
+#   NETS_STATE_DIR=/var/lib/nets

@@ -1,0 +1,40 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    # Dienstbenutzer ohne Login-Shell. StateDirectory= im Unit legt
+    # /var/lib/nets an, aber oui-update laeuft hier schon vorher.
+    if ! getent passwd nets >/dev/null; then
+      adduser --system --group --no-create-home \
+              --home /var/lib/nets --shell /usr/sbin/nologin nets
+    fi
+    mkdir -p /var/lib/nets
+    chown nets:nets /var/lib/nets
+    chmod 0750 /var/lib/nets
+
+    # Herstellerdatenbank holen, falls noch keine da ist. Ohne Netz ist das
+    # kein Fehler -- der Lookup liefert dann nur nichts, bis es nachgeholt wird.
+    if [ ! -s /var/lib/nets/oui.tsv ]; then
+      echo "nets: lade IEEE-Herstellerdatenbank ..."
+      if runuser -u nets -- /usr/bin/python3 -m nets oui-update >/dev/null 2>&1; then
+        echo "nets: Herstellerdatenbank geladen."
+      else
+        echo "nets: Herstellerdatenbank nicht erreichbar -- spaeter nachholen mit:"
+        echo "      sudo runuser -u nets -- python3 -m nets oui-update"
+      fi
+    fi
+    ;;
+esac
+
+#DEBHELPER#
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+  if [ "$1" = configure ]; then
+    systemctl enable nets.service || true
+    systemctl restart nets.service || true
+  fi
+fi
+
+exit 0

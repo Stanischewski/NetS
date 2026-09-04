@@ -1,0 +1,25 @@
+Package: nets
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: all
+Maintainer: NetS <root@localhost>
+Depends: python3 (>= 3.11),
+         python3-scapy (>= 2.6),
+         python3-fastapi (>= 0.93),
+         python3-uvicorn (>= 0.30),
+         python3-httpx (>= 0.27),
+         libpcap0.8t64 | libpcap0.8,
+         iproute2,
+         iputils-ping,
+         adduser
+Recommends: snmp, nmap
+Suggests: tcpdump
+Description: Netzwerk-Inventar mit Historie und Layer-2-Topologie
+ Hoert dauerhaft passiv mit (ARP, DHCP, mDNS, SSDP, LLDP, IPv6 NDP) und findet
+ dadurch ueber Tage auch Geraete, die selten online sind. Ergaenzt das um
+ gezielte aktive Verfahren und um Abfragen der Netzwerk-Infrastruktur ueber
+ austauschbare Adapter (SNMP, UniFi, Proxmox, OpenWrt, MikroTik, FRITZ!Box).
+ .
+ Loest aus den MAC-Adresstabellen der Switches auf, an welchem Port ein Geraet
+ haengt, und zeigt das als hierarchischen Baum. Bedienung ueber eine WebUI.
