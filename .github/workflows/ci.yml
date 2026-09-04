@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Abhängigkeiten
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet -r requirements.txt
+
+      # Die Tests kommen ohne echtes Netz und ohne root aus: konstruierte
+      # Pakete laufen durch den vollen passiven Pfad, die Oberfläche gegen
+      # einen DOM-Stub. Nur der Raw-Socket selbst bleibt ungeprüft.
+      - name: Python-Tests
+        run: |
+          fail=0
+          for t in smoke replay wifi identify data webscan subnets; do
+            echo "--- tests/test_$t.py"
+            python "tests/test_$t.py" || fail=1
+          done
+          exit $fail
+
+      - name: Oberflächen-Tests
+        run: node tests/test_ui.mjs

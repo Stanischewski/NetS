@@ -443,6 +443,19 @@ uvicorn aber erst einige Sekunden später lauscht.
 
 Mit `--venv` lässt sich der Paketweg überspringen.
 
+### Fertiges Paket aus dem Release
+
+Am schnellsten, ohne Klon und ohne Bau — setzt Debian 13 (trixie) voraus:
+
+```bash
+wget https://github.com/Stanischewski/NetS/releases/latest/download/nets_0.1.0-1_all.deb
+sudo apt install --no-install-recommends ./nets_0.1.0-1_all.deb snmp nmap
+```
+
+Jedes Release wird vor der Veröffentlichung in einem Trixie-Container
+installiert, geprüft und wieder entfernt — ein Paket, das sich nicht
+installieren lässt, kommt gar nicht erst heraus.
+
 ### Auf einem beliebigen Rechner
 
 Ein Befehl, der den passenden Weg selbst wählt:

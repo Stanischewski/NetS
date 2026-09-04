@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Das Paket ist reines Python ("Architecture: all"), der Bau braucht
+      # nur dpkg-deb. Erst die *Installation* setzt Debian 13 voraus, weil
+      # dort die Abhängigkeiten in ausreichenden Versionen liegen.
+      - name: Paket bauen
+        run: bash deploy/build-deb.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+
+      # Der eigentliche Zweck dieses Jobs: ein Paket, das sich nicht
+      # installieren lässt, darf nicht in ein Release. Ohne libpcap etwa
+      # startet der Sniffer nicht -- das fiel erst bei einer schlanken
+      # Installation auf.
+      - name: Installieren wie ein Anwender
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ./nets_*.deb snmp
+
+      - name: Prüfen
+        run: |
+          nets check || true          # ohne CAP_NET_RAW schlägt der Rechtetest fehl
+          python3 -c "import nets, nets.web.app, nets.adapters; print('Import ok')"
+          python3 -c "
+          from nets.adapters import all_types
+          names = [t['type_id'] for t in all_types()]
+          assert len(names) >= 6, names
+          print('Adapter:', ', '.join(names))"
+
+      - name: Entfernen und Aufräumen prüfen
+        run: |
+          apt-get purge -y nets
+          test ! -e /usr/bin/nets
+          test ! -d /var/lib/nets
+          echo "purge hat sauber aufgeräumt"
+
+  release:
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: dist
+
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          DEB="$(basename dist/*.deb)"
+          # Notizen in eine Datei statt in einen Heredoc im YAML-Block: dort
+          # laesst sich der Terminator nicht einruecken, und in <<'EOF' wuerden
+          # die Variablen nicht ersetzt.
+          cat > notes.md <<NOTES
+          Debian-Paket fuer Debian 13 (trixie) und neuer.
+
+          \`\`\`bash
+          wget https://github.com/${REPO}/releases/download/${TAG}/${DEB}
+          sudo apt install --no-install-recommends ./${DEB} snmp nmap
+          \`\`\`
+
+          Auf aelteren Systemen stattdessen \`sudo bash deploy/install.sh\` aus dem
+          Quellbaum -- das legt eine virtuelle Umgebung an, weil Debian 12 nur
+          FastAPI 0.92 mitbringt und der Code \`lifespan=\` ab 0.93 braucht.
+
+          Das Paket wurde vor der Veroeffentlichung in einem Trixie-Container
+          installiert, geprueft und wieder entfernt.
+          NOTES
+
+          gh release create "$TAG" dist/*.deb \
+            --title "NetS $TAG" --notes-file notes.md
