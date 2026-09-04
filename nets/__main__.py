@@ -16,6 +16,11 @@ import sys
 from pathlib import Path
 
 DEFAULT_DB = os.environ.get("NETS_DB", "/var/lib/nets/nets.db")
+# Aus der Umgebung, damit /etc/default/nets tatsaechlich etwas bewirkt.
+# Wer die WebUI nur ueber einen SSH-Tunnel erreichbar machen will, setzt
+# NETS_HOST=127.0.0.1 -- ohne das Unit anfassen zu muessen.
+DEFAULT_HOST = os.environ.get("NETS_HOST", "0.0.0.0")
+DEFAULT_PORT = int(os.environ.get("NETS_PORT", "8080"))
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -219,8 +224,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command")
 
     serve = sub.add_parser("serve", help="Dienst und WebUI starten")
-    serve.add_argument("--host", default="0.0.0.0")
-    serve.add_argument("--port", type=int, default=8080)
+    serve.add_argument("--host", default=DEFAULT_HOST,
+                       help=f"Lauschadresse (NETS_HOST, aktuell {DEFAULT_HOST})")
+    serve.add_argument("--port", type=int, default=DEFAULT_PORT,
+                       help=f"Port (NETS_PORT, aktuell {DEFAULT_PORT})")
     serve.set_defaults(func=cmd_serve)
 
     oui = sub.add_parser("oui-update", help="IEEE-Herstellerdatenbank laden")
@@ -234,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
     )
     if not hasattr(args, "func"):
-        args.host, args.port = "0.0.0.0", 8080
+        args.host, args.port = DEFAULT_HOST, DEFAULT_PORT
         args.func = cmd_serve
     return args.func(args)
 

@@ -7,7 +7,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Aus der Paketinstallation: das System-Python, keine virtuelle Umgebung.
-ExecStart=/usr/bin/python3 -m nets --db /var/lib/nets/nets.db serve --port 8080
+# Adresse und Port bewusst nicht hier festnageln -- sie kommen aus
+# /etc/default/nets, sonst waere die EnvironmentFile-Zeile wirkungslos.
+ExecStart=/usr/bin/python3 -m nets --db /var/lib/nets/nets.db serve
 Restart=always
 RestartSec=5
 EnvironmentFile=-/etc/default/nets

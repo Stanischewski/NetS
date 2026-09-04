@@ -1,3 +1,15 @@
 # Wird von /lib/systemd/system/nets.service eingelesen.
-# Beispiele:
-#   NETS_STATE_DIR=/var/lib/nets
+# Nach jeder Aenderung: systemctl restart nets
+
+# Wo die Datenbank und die Herstellerdatenbank liegen.
+#NETS_STATE_DIR=/var/lib/nets
+
+# Lauschadresse der WebUI. Standard ist 0.0.0.0, also von ueberall
+# erreichbar. Die WebUI kennt keine Anmeldung -- wer sie nicht im ganzen
+# Netz offen stehen lassen will, bindet sie an Loopback und tunnelt:
+#
+#   NETS_HOST=127.0.0.1
+#   ssh -N -L 8080:127.0.0.1:8080 root@<IP-des-Containers>
+#
+#NETS_HOST=0.0.0.0
+#NETS_PORT=8080

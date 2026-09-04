@@ -268,6 +268,64 @@ def test_sniffer_falls_back_when_libpcap_is_missing():
         passive.PassiveSniffer._start = original
 
 
+def test_listen_address_comes_from_the_environment():
+    """/etc/default/nets wurde zwar eingelesen, konnte aber nichts bewirken:
+    Adresse und Port standen fest im ExecStart. Genau das braucht man aber,
+    um die WebUI an Loopback zu binden und per SSH zu tunneln."""
+    import importlib
+    import os
+
+    import nets.__main__ as cli
+
+    def defaults(**env):
+        """Laedt das Modul mit gesetzter Umgebung neu und liest die Vorgaben."""
+        keep = {k: os.environ.get(k) for k in ("NETS_HOST", "NETS_PORT")}
+        for key in keep:
+            os.environ.pop(key, None)
+        os.environ.update(env)
+        try:
+            module = importlib.reload(cli)
+            return module.DEFAULT_HOST, module.DEFAULT_PORT
+        finally:
+            for key, value in keep.items():
+                os.environ.pop(key, None)
+                if value is not None:
+                    os.environ[key] = value
+            importlib.reload(cli)
+
+    assert defaults() == ("0.0.0.0", 8080), "ohne Vorgabe von ueberall erreichbar"
+    assert defaults(NETS_HOST="127.0.0.1", NETS_PORT="9999") == ("127.0.0.1", 9999)
+
+    # Ein ausdrueckliches Argument muss die Umgebung schlagen. Geprueft wird
+    # der echte Parser: cmd_serve wird ersetzt, statt uvicorn zu starten.
+    seen = {}
+    original = cli.cmd_serve
+    cli.cmd_serve = lambda args: seen.update(host=args.host, port=args.port) or 0
+    try:
+        os.environ["NETS_HOST"] = "127.0.0.1"
+        importlib.reload(cli).cmd_serve = cli.cmd_serve
+        cli.main(["serve", "--host", "10.0.0.1"])
+        assert seen["host"] == "10.0.0.1", seen
+        # Auch ohne Unterkommando -- der Dienst startet dann ueber den
+        # Standardpfad -- muss die Umgebung gelten, sonst lauschte er trotz
+        # NETS_HOST=127.0.0.1 auf allen Adressen.
+        seen.clear()
+        cli.main([])
+        assert seen["host"] == "127.0.0.1", seen
+    finally:
+        os.environ.pop("NETS_HOST", None)
+        cli.cmd_serve = original
+        importlib.reload(cli)
+
+
+def test_service_unit_does_not_pin_the_address():
+    """Sonst waere die EnvironmentFile-Zeile im Unit wirkungslos."""
+    unit = (Path(__file__).resolve().parents[1] / "deploy/debian/nets.service").read_text()
+    exec_line = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
+    assert "--port" not in exec_line and "--host" not in exec_line, exec_line
+    assert "EnvironmentFile=-/etc/default/nets" in unit
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

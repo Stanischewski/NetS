@@ -720,6 +720,69 @@ sie ist die Sicherung nur die halbe Miete; mit ihnen ist die Datei
 entsprechend vertraulich. Ein erneuter Import legt keine Duplikate an — Adapter
 gleichen Namens werden aktualisiert.
 
+## Zugriff absichern
+
+Die WebUI kennt **keine Anmeldung**. Sie zeigt, welche Geräte es gibt, wo sie
+hängen und welche Weboberflächen im Netz erreichbar sind — das gehört nicht
+offen ins VLAN. Standardmäßig lauscht der Dienst auf `0.0.0.0:8080`, was für
+ein abgeschottetes Verwaltungsnetz in Ordnung ist; sonst besser an Loopback
+binden und über SSH tunneln.
+
+In `/etc/default/nets`:
+
+```
+NETS_HOST=127.0.0.1
+```
+
+Dann `systemctl restart nets`. Vom Arbeitsplatz aus:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 root@10.0.0.207
+```
+
+Die Seite liegt danach auf `http://localhost:8080` — verschlüsselt, mit der
+Zugangskontrolle von SSH und ohne eine Portfreigabe zwischen den VLANs.
+
+Der Umweg über die Umgebungsvariable ist Absicht: `ExecStart` im Unit nagelt
+weder Adresse noch Port fest, sonst wäre die `EnvironmentFile`-Zeile
+wirkungslos. Ein `systemctl edit nets` ist damit nicht nötig, und die
+Einstellung überlebt ein Paket-Upgrade.
+
+## Wenn etwas nicht läuft
+
+`nets check` beantwortet die meisten Fragen. Zwei Fälle sind es fast immer:
+
+**Der Dienst läuft, sammelt aber nichts.** Im Protokoll steht dann
+`Cannot set filter: libpcap is not available`. Den BPF-Ausdruck übersetzt
+libpcap, nicht scapy. Tückisch ist, dass das Paket installiert sein *kann* und
+es trotzdem klemmt: Python sucht Bibliotheken nicht im Dateisystem, sondern
+über den `ldconfig`-Cache. Fehlt der Eintrag dort — in LXC-Templates kommt das
+vor, wenn der `ldconfig`-Trigger beim Bau des Images übersprungen wurde —,
+existiert die Bibliothek für scapy nicht:
+
+```bash
+ldconfig -p | grep pcap                                    # zeigt nichts?
+python3 -c "import ctypes.util as u; print(u.find_library('pcap'))"   # None?
+sudo ldconfig && sudo systemctl restart nets               # das behebt es
+```
+
+Ohne Kernel-Filter gibt der Sniffer seit `6b9cb5d` nicht mehr auf, sondern
+filtert in Python weiter — dann sammelt er zwar, kostet aber deutlich mehr
+CPU. `nets check` weist beides unter *Paketfilter* aus.
+
+**Die WebUI ist vom PC aus nicht erreichbar.** Erst klären, ob der Dienst
+überhaupt lauscht:
+
+```bash
+ss -tlnp | grep 8080        # erwartet: 0.0.0.0:8080
+```
+
+Sagt `ping` ja, `ss` auch, und es geht trotzdem nicht, dann blockiert etwas
+zwischen den beiden — bei Proxmox meist die Firewall am Container
+(Datacenter → CT → Firewall), sonst der Router zwischen den VLANs. Ein `ttl`
+von 63 statt 64 beim Ping zeigt an, dass ein Router dazwischen steht. Der
+SSH-Tunnel weiter oben umgeht das ohne Freigabe.
+
 ## Tests
 
 ```bash
