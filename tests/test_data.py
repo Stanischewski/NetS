@@ -411,6 +411,56 @@ def test_api_purge_requires_confirmation():
         assert client.post("/api/config/import", json={"version": 99}).status_code == 400
 
 
+def test_repair_detaches_foreign_identity_from_a_reflector():
+    """Datenbanken, die vor der Korrektur liefen, tragen den Schaden weiter --
+    beim Anwender in zwei Instanzen, jeweils mit einem anderen falschen Namen,
+    je nachdem welche Ankuendigung der Reflector zuletzt weitergereicht hat."""
+    import tempfile
+
+    from nets.store import Observation
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    store = Store(tmp.name)
+
+    router = "6c:63:f8:00:00:03"
+    store.observe(Observation(mac=router, ip="192.0.2.2", source="arp"))
+    rid = store.conn.execute("SELECT id FROM devices WHERE mac=?", (router,)).fetchone()["id"]
+
+    # So sah es vorher aus: fremder Hostname und fremdes Modell per mDNS,
+    # dazu die Markierung als Weiterleiter.
+    store.observe(Observation(mac=router, source="mdns", hostname="fremder-pc",
+                              facts={"model": "OptiPlex 3070"}))
+    store.observe(Observation(mac=router, source="mdns", facts={"role": "mdns_reflector"}))
+    store.observe(Observation(mac=router, source="ssdp", facts={"ssdp_server": "Fremd/1.0"}))
+    # Was der Router selbst gesagt hat, muss bleiben.
+    store.observe(Observation(mac=router, source="lldp", facts={"lldp_sysname": "udm-pro"}))
+
+    assert store.conn.execute(
+        "SELECT hostname FROM devices WHERE id=?", (rid,)).fetchone()["hostname"] == "fremder-pc"
+
+    removed = store.repair_reflector_identities()
+    assert removed >= 2, removed
+
+    keys = {r["key"] for r in store.conn.execute(
+        "SELECT key FROM facts WHERE device_id=?", (rid,))}
+    assert "model" not in keys and "ssdp_server" not in keys and "hostname" not in keys
+    assert "lldp_sysname" in keys, "eigene Angaben bleiben unangetastet"
+    assert "role" in keys, "die Markierung als Weiterleiter wird gebraucht"
+    assert store.conn.execute(
+        "SELECT hostname FROM devices WHERE id=?", (rid,)).fetchone()["hostname"] is None
+
+    # Geraete ohne Weiterleiter-Markierung fasst die Reparatur nicht an.
+    pc = "a0:80:69:00:00:07"
+    store.observe(Observation(mac=pc, source="mdns", hostname="buero-pc"))
+    store.repair_reflector_identities()
+    assert store.conn.execute(
+        "SELECT hostname FROM devices WHERE mac=?", (pc,)).fetchone()["hostname"] == "buero-pc"
+
+    # Idempotent -- ein zweiter Lauf findet nichts mehr.
+    assert store.repair_reflector_identities() == 0
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

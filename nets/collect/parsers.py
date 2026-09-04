@@ -135,6 +135,15 @@ _TXT_KEYS = {
 }
 
 
+#: MACs, die nachweislich fremde Ankuendigungen weiterreichen. Prozessweit,
+#: weil derselbe Reflector in mDNS *und* SSDP auftaucht: wer einmal beim
+#: Weiterreichen erwischt wurde, darf auch im anderen Protokoll keine fremde
+#: Identitaet mehr geschenkt bekommen. Der Satz baut sich in Sekunden neu auf,
+#: ein Reflector spiegelt naemlich permanent -- er muss nirgends gespeichert
+#: werden.
+_REFLECTORS: set[str] = set()
+
+
 class MdnsParser:
     """Bonjour/Avahi. Apple-Geraete, Drucker, Chromecasts und viel IoT
     veroeffentlichen hier Hostname, Modell und Dienste voellig ungefragt."""
@@ -162,6 +171,10 @@ class MdnsParser:
         #: IPv4 aus den A-Records. Weicht sie von der Absenderadresse ab, hat
         #: jemand die Ankuendigung weitergereicht statt selbst gesendet.
         announced_ip = None
+        #: Dasselbe fuer AAAA. Ohne das blieb eine Luecke: kuendigt ein Geraet
+        #: nur ueber IPv6 an, ist announced_ip None, die Pruefung unten faellt
+        #: aus, und der Hostname landet doch auf dem Weiterleiter.
+        announced_v6 = None
 
         for section in ("an", "ns", "ar"):
             for rr in _iter_records(getattr(dns, section, None)):
@@ -171,6 +184,8 @@ class MdnsParser:
                     hostname = hostname or rrname[: -len(".local")]
                     if rtype == 1 and announced_ip is None:
                         announced_ip = _decode(getattr(rr, "rdata", "") or "")
+                    elif rtype == 28 and announced_v6 is None:
+                        announced_v6 = _decode(getattr(rr, "rdata", "") or "")
                 elif rtype == 12:  # PTR -> Dienstname
                     svc = _decode(getattr(rr, "rdata", b"")).rstrip(".")
                     if "._tcp" in rrname or "._udp" in rrname:
@@ -202,13 +217,35 @@ class MdnsParser:
         # Die Wahrheit steht im Paket: der A-Record nennt die Adresse des
         # gemeinten Geraets. Weicht sie vom Absender ab, wird nach ihr
         # zugeordnet statt nach der MAC.
+        # Die Wahrheit steht im Paket: der A- bzw. AAAA-Record nennt die
+        # Adresse des gemeinten Geraets. Verglichen wird nur innerhalb einer
+        # Familie -- ein A-Record gegen eine IPv6-Absenderadresse zu halten
+        # wuerde jedes Geraet, das mDNS ueber IPv6 schickt, zum Weiterleiter
+        # erklaeren.
+        v6_src = pkt[IPv6].src if IPv6 in pkt else None
+        announced = None
         if announced_ip and ipv4_src and announced_ip != ipv4_src:
+            announced = announced_ip
+        elif announced_v6 and v6_src and announced_v6 != v6_src:
+            announced = announced_v6
+
+        if announced:
+            _REFLECTORS.add(mac)
             yield Observation(
                 mac=mac, ip=ip, facts={"role": "mdns_reflector"}, source=self.name
             )
             yield Observation(
-                mac=None, ip=announced_ip, hostname=hostname, facts=facts, source=self.name
+                mac=None, ip=announced, hostname=hostname, facts=facts, source=self.name
             )
+            return
+
+        # Ein bereits ueberfuehrter Weiterleiter, aber diesmal ohne Adress-
+        # Record zum Gegenpruefen -- etwa eine reine PTR/TXT-Ankuendigung.
+        # Dann ist nicht feststellbar, wem die Merkmale gehoeren. Sie ihm
+        # zuzuschreiben waere geraten, und zwar nachweislich falsch: genau so
+        # bekam der Router den Hostnamen eines PCs aus einem anderen VLAN.
+        if mac in _REFLECTORS and (hostname or facts):
+            yield Observation(mac=mac, ip=ip, source=self.name)
             return
 
         yield Observation(mac=mac, ip=ip, hostname=hostname, facts=facts, source=self.name)
@@ -285,7 +322,43 @@ class SsdpParser:
                 facts["upnp_location"] = value[:200]
         if not facts:
             return
+
+        # SSDP traegt seine eigene Gegenprobe: LOCATION zeigt auf das
+        # Beschreibungsdokument *des ankuendigenden Geraets*, also auf dessen
+        # Adresse. Reicht ein Reflector die Nachricht ueber eine VLAN-Grenze
+        # weiter, passt sie nicht mehr zur Absenderadresse -- und die Merkmale
+        # gehoeren dann dem Host aus der URL, nicht dem Weiterleiter.
+        announced = _host_of(facts.get("upnp_location"))
+        if announced and ip and announced != ip:
+            _REFLECTORS.add(mac)
+            yield Observation(mac=mac, ip=ip, facts={"role": "ssdp_reflector"},
+                              source=self.name)
+            yield Observation(mac=None, ip=announced, facts=facts, source=self.name)
+            return
+
+        if mac in _REFLECTORS:
+            # Bekannter Weiterleiter ohne verwertbare LOCATION: nur Anwesenheit.
+            yield Observation(mac=mac, ip=ip, source=self.name)
+            return
+
         yield Observation(mac=mac, ip=ip, facts=facts, source=self.name)
+
+
+def _host_of(location: str | None) -> str | None:
+    """Die IP-Adresse aus einer LOCATION-URL -- Namen helfen hier nicht weiter."""
+    if not location:
+        return None
+    host = location.split("//", 1)[-1].split("/", 1)[0].rsplit("@", 1)[-1]
+    if host.startswith("["):                      # IPv6 in eckigen Klammern
+        host = host[1:].split("]", 1)[0]
+    else:
+        host = host.split(":", 1)[0]
+    try:
+        import ipaddress
+
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return None
 
 
 # ----------------------------------------------------------------- IPv6 / NDP

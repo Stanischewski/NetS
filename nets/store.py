@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import sqlite3
 import threading
 from collections import defaultdict
@@ -16,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import db, util
+
+log = logging.getLogger("nets.store")
 
 PRESENCE_BUCKET = 300  # Sekunden
 
@@ -607,6 +610,55 @@ class Store:
             )
 
     # ------------------------------------------------------------- Ableitungen
+
+    def repair_reflector_identities(self) -> int:
+        """Fremde Identitaeten von einem Weiterleiter wieder abloesen.
+
+        Der Parser verhindert das jetzt, aber Datenbanken, die vorher gelaufen
+        sind, tragen den Schaden weiter: der Router steht dort unter dem
+        Hostnamen irgendeines Geraets aus einem anderen VLAN, und weil die
+        Weboberflaechen ueber die IP auf das Geraet zeigen, erscheinen
+        saemtliche VLAN-Gateways unter diesem Namen.
+
+        Entfernt werden nur Merkmale, die per mDNS oder SSDP an ein als
+        Weiterleiter markiertes Geraet geraten sind. Was aus DHCP, LLDP oder
+        einem Adapter stammt, bleibt -- das hat der Router selbst gesagt.
+        """
+        reflectors = [int(r["device_id"]) for r in self.conn.execute(
+            "SELECT DISTINCT device_id FROM facts "
+            "WHERE key='role' AND value IN ('mdns_reflector','ssdp_reflector')"
+        )]
+        if not reflectors:
+            return 0
+
+        removed = 0
+        marks = ",".join("?" * len(reflectors))
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute(
+                    f"DELETE FROM facts WHERE device_id IN ({marks}) "
+                    "AND source IN ('mdns','ssdp') AND key!='role'", reflectors,
+                )
+                removed = cur.rowcount
+                # Den angezeigten Namen nur zuruecksetzen, wenn keine
+                # belastbare Quelle mehr dafuer spricht.
+                for device_id in reflectors:
+                    better = cur.execute(
+                        "SELECT value FROM facts WHERE device_id=? AND key='hostname' "
+                        "ORDER BY ts DESC LIMIT 1", (device_id,),
+                    ).fetchone()
+                    cur.execute("UPDATE devices SET hostname=? WHERE id=?",
+                                (better["value"] if better else None, device_id))
+                cur.execute("COMMIT")
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
+        if removed:
+            log.info("%d fremde Merkmale von %d Weiterleiter(n) abgeloest",
+                     removed, len(reflectors))
+        return removed
 
     def refresh_identities(self) -> int:
         """Leitet Betriebssystem und Geraetetyp aus den gesammelten Merkmalen ab.

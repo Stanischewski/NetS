@@ -230,6 +230,124 @@ def test_mdns_srv_reveals_web_interface_port():
         ("192.0.2.30", 8123, "http", "mdns")
 
 
+def test_reflector_stays_recognised_without_an_address_record():
+    """Aus dem echten Netz nachgestellt: der Router trug den Hostnamen eines
+    PCs aus einem anderen VLAN, und auf der Weboberflaechen-Seite standen
+    darum saemtliche VLAN-Gateways unter dessen Namen.
+
+    Die alte Pruefung verlangte einen A-Record zum Gegenpruefen. Reine
+    PTR/TXT-Ankuendigungen und solche, die nur AAAA fuehren, rutschten daran
+    vorbei -- und genau die reicht ein Reflector auch weiter."""
+    import tempfile
+
+    from nets.collect import parsers
+    from nets.store import Observation, Store
+
+    parsers._REFLECTORS.clear()
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    store = Store(tmp.name)
+    sniffer = PassiveSniffer(store, iface="test0")
+
+    router = "6c:63:f8:00:00:03"
+    pc = "a0:80:69:00:00:07"
+    store.observe(Observation(mac=router, ip="192.0.2.2", source="arp"))
+    store.observe(Observation(mac=pc, ip="10.10.10.24", source="arp"))
+
+    def names():
+        return {r["mac"]: r["hostname"] for r in
+                store.conn.execute("SELECT mac, hostname FROM devices")}
+
+    # 1) Erst wird der Reflector ueberfuehrt -- hier noch mit A-Record.
+    sniffer._handle(Ether(bytes(
+        Ether(src=router, dst="01:00:5e:00:00:fb")
+        / IP(src="192.0.2.2", dst="224.0.0.251")
+        / UDP(sport=5353, dport=5353)
+        / DNS(qr=1, aa=1, an=[DNSRR(rrname="buero-pc.local.", type="A",
+                                    rdata="10.10.10.24", ttl=120)]))))
+    assert names()[pc] == "buero-pc", "der Name gehoert dem Geraet aus dem A-Record"
+    assert not names()[router], "und keinesfalls dem Weiterleiter"
+
+    # 2) Jetzt dasselbe ohne Adress-Record. Frueher landete der Hostname damit
+    #    beim Router -- er ist ja der Absender.
+    sniffer._handle(Ether(bytes(
+        Ether(src=router, dst="01:00:5e:00:00:fb")
+        / IP(src="192.0.2.2", dst="224.0.0.251")
+        / UDP(sport=5353, dport=5353)
+        / DNS(qr=1, aa=1, an=[
+            DNSRR(rrname="fremder-pc.local.", type="AAAA",
+                  rdata="fd00::24", ttl=120),
+            DNSRR(rrname="fremder-pc._workstation._tcp.local.", type="TXT",
+                  rdata=[b"md=OptiPlex 3070"], ttl=120)]))))
+    assert not names()[router], "ein ueberfuehrter Weiterleiter erbt keinen Namen mehr"
+
+    facts = {r["key"]: r["value"] for r in store.conn.execute(
+        "SELECT f.key, f.value FROM facts f JOIN devices d ON d.id=f.device_id WHERE d.mac=?",
+        (router,))}
+    assert "model" not in facts, facts
+
+    # 3) Ein AAAA-Record, dessen Adresse nicht zur IPv6-Quelle passt, entlarvt
+    #    den Weiterleiter jetzt genauso wie ein A-Record.
+    parsers._REFLECTORS.clear()
+    store.observe(Observation(mac="2c:d8:ae:00:00:09", ip="fd00::55", source="ndp"))
+    sniffer._handle(Ether(bytes(
+        Ether(src=router, dst="33:33:00:00:00:fb")
+        / IPv6(src="fd00::2", dst="ff02::fb")
+        / UDP(sport=5353, dport=5353)
+        / DNS(qr=1, aa=1, an=[DNSRR(rrname="tv.local.", type="AAAA",
+                                    rdata="fd00::55", ttl=120)]))))
+    assert names()["2c:d8:ae:00:00:09"] == "tv"
+    assert not names()[router]
+
+
+def test_ssdp_location_names_the_real_device():
+    """SSDP traegt seine eigene Gegenprobe: LOCATION zeigt auf das
+    Beschreibungsdokument des ankuendigenden Geraets. Bisher wurde die URL nur
+    als Notiz abgelegt und die Merkmale dem Absender zugeschrieben."""
+    import tempfile
+
+    from nets.collect import parsers
+    from nets.store import Observation, Store
+
+    parsers._REFLECTORS.clear()
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    store = Store(tmp.name)
+    sniffer = PassiveSniffer(store, iface="test0")
+
+    router = "6c:63:f8:00:00:03"
+    shelly = "b0:b2:1c:00:00:11"
+    store.observe(Observation(mac=router, ip="192.0.2.2", source="arp"))
+    store.observe(Observation(mac=shelly, ip="10.10.60.134", source="arp"))
+
+    payload = (b"NOTIFY * HTTP/1.1\r\n"
+               b"LOCATION: http://10.10.60.134:80/desc.xml\r\n"
+               b"SERVER: ShellyHTTP/1.0.0\r\n"
+               b"NT: urn:schemas-upnp-org:device:Basic:1\r\n\r\n")
+    sniffer._handle(Ether(bytes(
+        Ether(src=router, dst="01:00:5e:7f:ff:fa")
+        / IP(src="192.0.2.2", dst="239.255.255.250")
+        / UDP(sport=1900, dport=1900) / Raw(load=payload))))
+
+    def facts_of(mac):
+        return {r["key"]: r["value"] for r in store.conn.execute(
+            "SELECT f.key, f.value FROM facts f JOIN devices d ON d.id=f.device_id "
+            "WHERE d.mac=?", (mac,))}
+
+    assert facts_of(shelly).get("ssdp_server") == "ShellyHTTP/1.0.0"
+    assert "ssdp_server" not in facts_of(router)
+    assert facts_of(router).get("role") == "ssdp_reflector"
+
+    # Sendet das Geraet selbst, passt LOCATION zur Quelle -- normale Zuordnung.
+    parsers._REFLECTORS.clear()
+    sniffer._handle(Ether(bytes(
+        Ether(src=shelly, dst="01:00:5e:7f:ff:fa")
+        / IP(src="10.10.60.134", dst="239.255.255.250")
+        / UDP(sport=1900, dport=1900) / Raw(load=payload))))
+    assert facts_of(shelly).get("ssdp_server") == "ShellyHTTP/1.0.0"
+    assert "role" not in facts_of(shelly)
+
+
 def test_mdns_reflector_does_not_absorb_foreign_identities():
     """Regression aus dem echten Netz: ein UDM-Pro spiegelt mDNS über
     VLAN-Grenzen und setzt dabei seine eigene Absender-MAC ein. Dadurch sammelte

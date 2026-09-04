@@ -370,6 +370,10 @@ class Daemon:
         marked = await asyncio.to_thread(self.store.infer_static_addressing, days * 86400)
         if marked:
             log.info("%d Geraete als statisch adressiert markiert", marked)
+        # Erst reparieren, dann ableiten: eine fremde Identitaet am
+        # Weiterleiter wuerde sonst gleich wieder in einen Geraetetyp
+        # uebersetzt.
+        await asyncio.to_thread(self.store.repair_reflector_identities)
         identified = await asyncio.to_thread(self.store.refresh_identities)
         log.info("%d Geraete mit abgeleiteter Identitaet", identified)
         retention = {
