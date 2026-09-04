@@ -256,6 +256,83 @@ def test_unifi_prefers_classic_api_and_falls_back():
     assert asyncio.run(with_key.dhcp_leases()) == []
 
 
+def test_proxmox_reports_a_powerless_token_instead_of_pretending():
+    """Proxmox-Tokens haben ab Werk 'Privilege Separation' an und erben damit
+    keines der Rechte ihres Benutzers. Die API antwortet dann auf jede Abfrage
+    mit 403. Frueher wurde das wie 404 behandelt und still zu einer leeren
+    Liste -- der Test meldete "ok, 0 Gaeste", die Topologie "keine MAC-Tabelle
+    geliefert", und niemand kam auf die Idee, dass es an den Rechten liegt."""
+    import asyncio
+
+    from nets.adapters.proxmox import ProxmoxAdapter
+
+    class FakeResponse:
+        def __init__(self, status, data=None):
+            self.status_code = status
+            self._data = data
+
+        def json(self):
+            return {"data": self._data}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    def adapter(routes, default=(404, None)):
+        a = ProxmoxAdapter({"base_url": "https://pve.invalid:8006",
+                            "auth_method": "token", "token_id": "u@pam!t",
+                            "token_secret": "x"})
+
+        class FakeClient:
+            headers: dict = {}
+
+            async def get(self, path):
+                return FakeResponse(*routes.get(path, default))
+
+            async def aclose(self):
+                pass
+
+        a._client = FakeClient()
+        return a
+
+    # 1) Token ohne jedes Recht: die API antwortet auf alles mit 403.
+    blocked = adapter({}, default=(403, None))
+    ok, message = asyncio.run(blocked.test())
+    assert ok is False, message
+    assert "Privilege Separation" in message
+    assert "/nodes" in message
+
+    # 2) Nodes lesbar, Gaeste nicht -- die haeufigere Halbkonfiguration.
+    half = adapter({
+        "/nodes": (200, [{"node": "pve"}]),
+        "/version": (200, {"version": "8.3.0"}),
+        "/nodes/pve/qemu": (403, None),
+        "/nodes/pve/lxc": (403, None),
+    })
+    ok, message = asyncio.run(half.test())
+    assert ok is False and "Privilege Separation" in message, message
+
+    # 3) Alles erlaubt: echte Gaeste, echte Meldung.
+    good = adapter({
+        "/nodes": (200, [{"node": "pve"}]),
+        "/version": (200, {"version": "8.3.0"}),
+        "/nodes/pve/qemu": (200, [{"vmid": 100, "name": "web", "status": "running"}]),
+        "/nodes/pve/lxc": (200, []),
+        "/nodes/pve/qemu/100/config": (200, {"net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0,tag=20"}),
+    })
+    ok, message = asyncio.run(good.test())
+    assert ok is True, message
+    assert "1 Gäste" in message and "8.3.0" in message
+
+    # Und die MAC-Tabelle traegt Bruecke und VLAN.
+    entries = asyncio.run(good.fdb())
+    assert [(e.mac, e.port_key, e.vlan) for e in entries] == [
+        ("bc:24:11:00:00:01", "pve:vmbr0", 20)]
+
+    hosts = asyncio.run(good.hosts())
+    assert hosts[0].name == "web" and "VM 100 auf pve" in hosts[0].note
+
+
 def test_proxmox_config_parsing():
     """Die netN-Zeilen von QEMU und LXC haben unterschiedliche Formate --
     bei QEMU ist die MAC der *Wert des Modellschlüssels*, bei LXC hwaddr."""

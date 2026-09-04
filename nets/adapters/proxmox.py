@@ -66,6 +66,8 @@ class ProxmoxAdapter(Adapter):
         super().__init__(config)
         self._client: httpx.AsyncClient | None = None
         self._cache: list[dict] | None = None
+        #: Pfade, die mit 403 abgelehnt wurden -- siehe _get().
+        self._denied: list[str] = []
 
     # ---------------------------------------------------------------- Transport
 
@@ -99,8 +101,17 @@ class ProxmoxAdapter(Adapter):
     async def _get(self, path: str) -> list | dict:
         client = await self._http()
         resp = await client.get(path)
-        if resp.status_code in (403, 404):
-            return []  # fehlende Berechtigung oder Feature -> ueberspringen
+        if resp.status_code == 404:
+            return []  # Feature auf dieser PVE-Version nicht vorhanden
+        if resp.status_code == 403:
+            # Frueher zusammen mit 404 stumm verschluckt. Das war die
+            # unguenstigste Variante: ein Token ohne Rechte sah damit aus wie
+            # ein Host ohne VMs -- test() meldete "ok, 0 Gaeste", und in der
+            # Topologie stand "keine MAC-Tabelle geliefert". Der Unterschied
+            # zwischen "darf nicht" und "gibt es nicht" muss sichtbar sein.
+            if path not in self._denied:
+                self._denied.append(path)
+            return []
         resp.raise_for_status()
         return resp.json().get("data") or []
 
@@ -142,15 +153,36 @@ class ProxmoxAdapter(Adapter):
     # --------------------------------------------------------------- Operationen
 
     async def test(self) -> tuple[bool, str]:
+        self._denied.clear()
+        self._cache = None
         try:
             nodes = await self._get("/nodes")
             version = await self._get("/version")
             guests = await self._guests()
-            names = ", ".join(n.get("node", "?") for n in nodes) or "?"
-            release = (version or {}).get("version", "?") if isinstance(version, dict) else "?"
-            return True, f"Verbunden: PVE {release}, Node(s) {names}, {len(guests)} Gäste"
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
+
+        if self._denied:
+            return False, (
+                "Angemeldet, aber ohne Leserecht auf "
+                + ", ".join(self._denied[:3])
+                + ". Bei Proxmox-Tokens ist 'Privilege Separation' ab Werk "
+                "aktiv -- das Token erbt dann keines der Rechte seines "
+                "Benutzers. Entweder beim Anlegen abwaehlen, oder dem Token "
+                "eine eigene ACL geben: "
+                "pveum acl modify / -token '<user>!<name>' -role PVEAuditor"
+            )
+        if not nodes:
+            return False, ("Keine Node geliefert. Stimmt die URL? Erwartet wird "
+                           "die PVE-Oberflaeche samt Port, z.B. https://10.0.0.186:8006")
+
+        names = ", ".join(n.get("node", "?") for n in nodes)
+        release = (version or {}).get("version", "?") if isinstance(version, dict) else "?"
+        if not guests:
+            return True, (f"Verbunden: PVE {release}, Node(s) {names} -- aber keine VMs "
+                          "oder Container sichtbar. Das Token darf die Nodes lesen, "
+                          "aber offenbar nicht deren Gaeste (VM.Audit fehlt).")
+        return True, f"Verbunden: PVE {release}, Node(s) {names}, {len(guests)} Gäste"
 
     async def identity(self) -> Identity:
         macs: list[str] = []
