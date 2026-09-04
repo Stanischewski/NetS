@@ -94,8 +94,13 @@ def _parse_manuf() -> dict[str, str]:
     """Fallback: die 'manuf'-Datei von Wireshark.
 
     Format je Zeile:  00:00:0C[/28]<TAB>Cisco<TAB>Cisco Systems, Inc
+
+    Wird tatsaechlich gebraucht: Die IEEE-Server lehnen Anfragen aus
+    Rechenzentren ab (aus GitHub-Runnern kommt "Connection refused"), waehrend
+    sie von einem Heimanschluss aus antworten. Ohne funktionierende
+    Rueckfallquelle scheitert der Paketbau dort also immer.
     """
-    url = "https://raw.githubusercontent.com/wireshark/wireshark/master/manuf"
+    url = "https://www.wireshark.org/download/automated/data/manuf"
     try:
         text = _fetch(url)
     except Exception as exc:
@@ -116,7 +121,11 @@ def _parse_manuf() -> dict[str, str]:
         nibbles = (int(bits) // 4) if bits.isdigit() else 6
         prefix = prefix[:nibbles]
         vendor = (parts[2] if len(parts) > 2 and parts[2].strip() else parts[1]).strip()
-        if prefix and vendor and nibbles in (6, 7, 9):
+        # len(prefix) mitpruefen: eine verstuemmelte Zeile wie "AA:BB" haette
+        # sonst ein zu kurzes Praefix in der Tabelle hinterlassen. Treffer
+        # gaebe es damit zwar nie -- der Lookup fragt 6, 7 oder 9 Nibbles ab --
+        # aber Muell gehoert gar nicht erst hinein.
+        if vendor and nibbles in (6, 7, 9) and len(prefix) == nibbles:
             entries[prefix] = vendor
     print(f"  manuf: {len(entries)} Eintraege")
     return entries

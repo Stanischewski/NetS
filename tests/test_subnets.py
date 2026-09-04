@@ -184,6 +184,46 @@ def test_sweep_too_large_is_refused():
         raise AssertionError("ein /8 darf nicht durchgesweept werden")
 
 
+def test_manuf_parser_handles_the_wireshark_format():
+    """Die Rückfallquelle war lange tot, ohne dass es auffiel: IEEE antwortet
+    von einem Heimanschluss aus, aus Rechenzentren aber nicht. Erst im CI
+    schlug der Paketbau fehl -- und die Rückfall-URL lieferte 404.
+
+    Der Parser wird hier ohne Netz gegen das echte Format geprüft."""
+    import nets.__main__ as cli
+
+    sample = "\n".join([
+        "# Kommentarzeile",
+        "",
+        "DC:A6:32\tRaspberryPi\tRaspberry Pi Trading Ltd",
+        "00:1B:A9\tBrother\tBrother industries, LTD.",
+        "8C:1F:64:0D:0/36\tGeneSys\tGeneSys Elektronik GmbH",   # MA-S, 36 Bit
+        "70:B3:D5:12:3/36\tKurzform",                            # ohne dritte Spalte
+        "kaputt",
+        "AA:BB\tZuKurz",                                          # kein gültiges Präfix
+    ])
+    original = cli._fetch
+    cli._fetch = lambda url, timeout=90: sample
+    try:
+        entries = cli._parse_manuf()
+    finally:
+        cli._fetch = original
+
+    assert entries["dca632"] == "Raspberry Pi Trading Ltd"
+    assert entries["001ba9"] == "Brother industries, LTD."
+    # Bei MA-S zählen neun Nibbles, und ohne dritte Spalte gilt die zweite.
+    assert entries["8c1f640d0"] == "GeneSys Elektronik GmbH"
+    assert entries["70b3d5123"] == "Kurzform"
+    assert "aabb" not in entries and "kaputt" not in entries
+
+    # Ein Netzfehler ergibt eine leere Menge, keinen Absturz.
+    cli._fetch = lambda url, timeout=90: (_ for _ in ()).throw(OSError("kein Netz"))
+    try:
+        assert cli._parse_manuf() == {}
+    finally:
+        cli._fetch = original
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
