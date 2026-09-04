@@ -43,7 +43,10 @@ def _fetch(url: str, timeout: int = 90) -> str:
 def cmd_oui_update(args: argparse.Namespace) -> int:
     from .util import oui_path
 
-    target = oui_path(for_writing=True)
+    # --output erlaubt es, die Datei bewusst neben den Programmcode zu legen.
+    # Genau das braucht der Paketbau: ohne mitgelieferte Datenbank waere eine
+    # frische Installation auf Netzzugang angewiesen.
+    target = Path(args.output) if getattr(args, "output", None) else oui_path(for_writing=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     entries: dict[str, str] = {}
 
@@ -192,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=cmd_serve)
 
-    sub.add_parser("oui-update", help="IEEE-Herstellerdatenbank laden").set_defaults(func=cmd_oui_update)
+    oui = sub.add_parser("oui-update", help="IEEE-Herstellerdatenbank laden")
+    oui.add_argument("--output", help="Zieldatei (Standard: der beschreibbare Datenpfad)")
+    oui.set_defaults(func=cmd_oui_update)
     sub.add_parser("check", help="Umgebung pruefen").set_defaults(func=cmd_check)
 
     args = parser.parse_args(argv)
