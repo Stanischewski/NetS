@@ -449,8 +449,21 @@ Am schnellsten, ohne Klon und ohne Bau — setzt Debian 13 (trixie) voraus:
 
 ```bash
 wget https://github.com/Stanischewski/NetS/releases/latest/download/nets_0.1.0-1_all.deb
+sudo apt update
 sudo apt install --no-install-recommends ./nets_0.1.0-1_all.deb snmp nmap
 ```
+
+Das `apt update` ist nicht bloß Höflichkeit. Ein frisch angelegter LXC bringt
+Paketlisten mit, die älter sind als die letzte Debian-Zwischenversion. `apt`
+löst die Abhängigkeiten dann gegen Versionen auf, die auf dem Spiegel längst
+ersetzt sind, und bricht mitten im Herunterladen ab:
+
+```
+Failed to fetch .../libglib2.0-0t64_2.84.4-3~deb13u1_amd64.deb  404  Not Found
+Failed to fetch .../python3-starlette_0.46.1-3_all.deb          404  Not Found
+```
+
+Das sieht nach einem kaputten Paket aus, liegt aber nur an den alten Listen.
 
 Jedes Release wird vor der Veröffentlichung in einem Trixie-Container
 installiert, geprüft und wieder entfernt — ein Paket, das sich nicht
@@ -491,6 +504,7 @@ gibt es weiter unten den Weg über eine virtuelle Umgebung.
 
 ```bash
 bash deploy/build-deb.sh              # oder --docker auf Nicht-Debian-Systemen
+sudo apt update
 sudo apt install --no-install-recommends ./dist/nets_0.1.0-1_all.deb snmp nmap
 ```
 
