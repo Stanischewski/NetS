@@ -453,6 +453,9 @@ sudo apt update
 sudo apt install --no-install-recommends ./nets_latest_all.deb snmp nmap
 ```
 
+In einem LXC arbeitet man meist ohnehin als root, und schlanke Images bringen
+gar kein `sudo` mit -- dann `sudo` in beiden Zeilen weglassen.
+
 Das `apt update` ist nicht bloß Höflichkeit. Ein frisch angelegter LXC bringt
 Paketlisten mit, die älter sind als die letzte Debian-Zwischenversion. `apt`
 löst die Abhängigkeiten dann gegen Versionen auf, die auf dem Spiegel längst
