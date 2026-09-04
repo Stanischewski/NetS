@@ -90,6 +90,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           DEB="$(basename dist/*.deb)"
+          # Zweitkopie unter festem Namen. Ohne sie zeigt der dokumentierte
+          # Befehl mit /releases/latest/download/ nach der naechsten Version
+          # ins Leere -- der Dateiname enthaelt ja die Version.
+          cp "dist/$DEB" dist/nets_latest_all.deb
           # Notizen in eine Datei statt in einen Heredoc im YAML-Block: dort
           # laesst sich der Terminator nicht einruecken, und in <<'EOF' wuerden
           # die Variablen nicht ersetzt.
@@ -97,6 +101,7 @@ jobs:
           Debian-Paket fuer Debian 13 (trixie) und neuer.
 
           \`\`\`bash
+          sudo apt update
           wget https://github.com/${REPO}/releases/download/${TAG}/${DEB}
           sudo apt install --no-install-recommends ./${DEB} snmp nmap
           \`\`\`

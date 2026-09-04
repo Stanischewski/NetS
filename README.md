@@ -448,9 +448,9 @@ Mit `--venv` lässt sich der Paketweg überspringen.
 Am schnellsten, ohne Klon und ohne Bau — setzt Debian 13 (trixie) voraus:
 
 ```bash
-wget https://github.com/Stanischewski/NetS/releases/latest/download/nets_0.1.0-1_all.deb
+wget https://github.com/Stanischewski/NetS/releases/latest/download/nets_latest_all.deb
 sudo apt update
-sudo apt install --no-install-recommends ./nets_0.1.0-1_all.deb snmp nmap
+sudo apt install --no-install-recommends ./nets_latest_all.deb snmp nmap
 ```
 
 Das `apt update` ist nicht bloß Höflichkeit. Ein frisch angelegter LXC bringt
@@ -505,7 +505,7 @@ gibt es weiter unten den Weg über eine virtuelle Umgebung.
 ```bash
 bash deploy/build-deb.sh              # oder --docker auf Nicht-Debian-Systemen
 sudo apt update
-sudo apt install --no-install-recommends ./dist/nets_0.1.0-1_all.deb snmp nmap
+sudo apt install --no-install-recommends ./dist/nets_*_all.deb snmp nmap
 ```
 
 Das `--no-install-recommends` lohnt sich: `python3-scapy` *empfiehlt* ipython3,

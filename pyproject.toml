@@ -1,6 +1,6 @@
 [project]
 name = "nets"
-version = "0.1.0"
+version = "0.1.1"
 description = "Passives und aktives Netzwerk-Inventar mit Layer-2-Topologie"
 requires-python = ">=3.11"
 dependencies = [
