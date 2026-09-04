@@ -168,6 +168,25 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"  FEHLT {module}")
             ok = False
 
+    # libpcap uebersetzt den BPF-Ausdruck. Fehlt sie, startet der Dienst
+    # trotzdem und meldet sich gesund -- nur sammelt der Sniffer nichts.
+    # Genau dieser Fall blieb unentdeckt, weil hier nur der Import geprueft
+    # wurde und 'import scapy' ohne libpcap anstandslos durchlaeuft.
+    print("\nPaketfilter:")
+    try:
+        from scapy.arch.common import compile_filter
+
+        compile_filter("arp", linktype=1)
+        print("  ok    libpcap uebersetzt BPF-Filter")
+    except Exception as exc:
+        if "libpcap" in str(exc):
+            print("  FEHLT libpcap -- 'apt install libpcap0.8t64'")
+            print("        Der Sniffer laeuft dann ungefiltert weiter, kostet")
+            print("        aber deutlich mehr CPU.")
+            ok = False
+        else:
+            print(f"  ?     Filtertest nicht moeglich: {exc}")
+
     print("\nRechte:")
     try:
         import socket

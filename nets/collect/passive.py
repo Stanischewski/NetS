@@ -44,6 +44,8 @@ class PassiveSniffer:
         self.per_iface: dict[str, int] = {}
         self.errors = 0
         self.error: str | None = None
+        #: Faellt der Kernel-Filter aus, laeuft der Sniffer ungefiltert weiter.
+        self.filtered = True
 
     @property
     def bpf(self) -> str:
@@ -64,21 +66,41 @@ class PassiveSniffer:
                 log.debug("Parser %s ist an einem Paket gescheitert", parser.name, exc_info=True)
 
     def start(self) -> None:
-        from scapy.sendrecv import AsyncSniffer
-
         if not self.ifaces:
             self.error = "kein Interface konfiguriert"
             raise RuntimeError(self.error)
-        log.info("Starte passiven Sniffer auf %s (filter: %s)",
-                 ", ".join(self.ifaces), self.bpf)
         self.error = None
+        try:
+            self._start(self.bpf)
+            self.filtered = True
+        except RuntimeError as exc:
+            # Den BPF-Ausdruck uebersetzt libpcap, nicht scapy. Fehlt die
+            # Bibliothek, scheitert nur das Uebersetzen -- mitlesen kann der
+            # AF_PACKET-Socket weiterhin. Ungefiltert weiterzumachen ist
+            # deutlich besser als gar nichts zu sammeln: die Parser verwerfen
+            # uninteressante Pakete ohnehin, es kostet nur CPU, weil jedes
+            # Paket dafuer bis nach Python durchgereicht wird.
+            if "libpcap" not in str(exc):
+                raise
+            log.warning("Kein Kernel-Filter moeglich (%s) -- der Sniffer laeuft "
+                        "ungefiltert weiter und filtert in Python. Behebbar mit: "
+                        "apt install libpcap0.8t64", exc)
+            self._start(None)
+            self.filtered = False
+
+    def _start(self, bpf: str | None) -> None:
+        from scapy.sendrecv import AsyncSniffer
+
+        log.info("Starte passiven Sniffer auf %s (filter: %s)",
+                 ", ".join(self.ifaces), bpf or "keiner")
+        kwargs = {"filter": bpf} if bpf else {}
         self._sniffer = AsyncSniffer(
             # scapy nimmt eine Liste entgegen und markiert jedes Paket mit
             # sniffed_on -- ein Sniffer je Interface waere nur mehr Threads.
             iface=self.ifaces if len(self.ifaces) > 1 else self.ifaces[0],
-            filter=self.bpf,
             prn=self._handle,
             store=False,
+            **kwargs,
         )
         self._sniffer.start()
 
@@ -112,5 +134,6 @@ class PassiveSniffer:
             "packets_seen": self.packets_seen,
             "parse_errors": self.errors,
             "parsers": [p.name for p in self.parsers],
+            "filtered": self.filtered,
             "error": str(failure) if failure else self.error,
         }

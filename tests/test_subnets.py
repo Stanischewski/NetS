@@ -224,6 +224,50 @@ def test_manuf_parser_handles_the_wireshark_format():
         cli._fetch = original
 
 
+def test_sniffer_falls_back_when_libpcap_is_missing():
+    """Ohne libpcap laesst sich der BPF-Ausdruck nicht uebersetzen -- mitlesen
+    kann der AF_PACKET-Socket aber weiterhin. Im LXC lief der Dienst deshalb
+    scheinbar gesund, sammelte aber tagelang nichts."""
+    import nets.collect.passive as passive
+
+    store = _store()
+    sniffer = passive.PassiveSniffer(store, iface="lo")
+
+    attempts: list[str | None] = []
+    original = passive.PassiveSniffer._start
+
+    def fake(self, bpf):
+        attempts.append(bpf)
+        if bpf is not None:
+            raise RuntimeError("Cannot set filter: libpcap is not available.")
+        self._sniffer = object()
+
+    passive.PassiveSniffer._start = fake
+    try:
+        sniffer.start()
+    finally:
+        passive.PassiveSniffer._start = original
+
+    assert attempts == [sniffer.bpf, None], "erst mit Filter, dann ohne"
+    assert sniffer.filtered is False
+    assert sniffer.status()["filtered"] is False
+
+    # Jeder andere Fehler bleibt ein Fehler -- ein fehlendes Interface darf
+    # nicht heimlich zu einem ungefilterten Sniffer werden.
+    def always_broken(self, bpf):
+        raise RuntimeError("Interface 'gibtsnicht' nicht gefunden")
+
+    passive.PassiveSniffer._start = always_broken
+    try:
+        try:
+            passive.PassiveSniffer(store, iface="gibtsnicht").start()
+            raise AssertionError("haette scheitern muessen")
+        except RuntimeError as exc:
+            assert "gibtsnicht" in str(exc)
+    finally:
+        passive.PassiveSniffer._start = original
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
